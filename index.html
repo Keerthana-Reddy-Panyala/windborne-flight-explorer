@@ -5,83 +5,142 @@
   <title>WindBorne Flight Explorer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <style>html,body,#map{height:100%;margin:0} .legend{background:#fff;padding:8px;border-radius:6px}</style>
+  <style>
+    html,body,#map{height:100%;margin:0}
+    .hud{position:fixed;left:8px;top:8px;background:#fff;padding:8px 10px;border-radius:8px;
+         font:12px/1.3 system-ui,Segoe UI,Roboto,Arial;border:1px solid #ddd}
+    .err{color:#b00}
+  </style>
 </head>
 <body>
 <div id="map"></div>
+<div class="hud" id="hud">Loading…</div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const HOURS = [...Array(24).keys()].map(h=>String(h).padStart(2,'0'));
+const HUD = document.getElementById('hud');
 const BASE = "https://a.windbornesystems.com/treasure";
+const HOURS = Array.from({length:24}, (_,i)=>String(i).padStart(2,"0"));
 
-function parsePoint(p){
-  const lat = p.lat ?? p.latitude ?? p.latDeg;
-  const lon = p.lon ?? p.lng ?? p.longitude ?? p.lonDeg;
-  const ts  = p.ts ?? p.time ?? p.timestamp ?? p.t;
-  const id  = p.id ?? p.balloon_id ?? p.name ?? "unknown";
-  if(lat==null || lon==null) return null;
-  const t = ts ? new Date(ts) : null;
-  return { id, lat:+lat, lon:+lon, t };
+/* ---------- helpers ---------- */
+function num(n){ const v = Number(n); return Number.isFinite(v) ? v : null; }
+function fixDeg(v){                 // handle micro-degrees, strings, etc.
+  let n = num(v); if(n==null) return null;
+  if(Math.abs(n)>180 && Math.abs(n)<=1e7) n = n/1e6;
+  return Math.abs(n)<=180 ? n : null;
+}
+function firstKey(obj, keys){
+  for(const k of keys){ if(obj?.[k]!=null) return obj[k]; }
+  return null;
 }
 
-async function fetchHour(h){
+/* Try hard to turn any record into {id,lat,lon,t} */
+function toPoint(rec){
+  if(!rec || typeof rec!=="object") return null;
+
+  // GeoJSON support
+  if(rec.type==="Feature" && rec.geometry?.type==="Point"){
+    const [lon,lat] = rec.geometry.coordinates||[];
+    const t = firstKey(rec.properties||rec, ['ts','time','timestamp','datetime','t','updatedAt']);
+    const id = firstKey(rec.properties||rec, ['id','balloon_id','name']);
+    return (lat!=null && lon!=null) ? norm({id, lat, lon, t}) : null;
+  }
+
+  // Common flat shapes
+  const lat = fixDeg(firstKey(rec, ['lat','latitude','latDeg','Lat','LAT','y']));
+  const lon = fixDeg(firstKey(rec, ['lon','lng','longitude','lonDeg','Lon','LON','x']));
+  const t   = firstKey(rec, ['ts','time','timestamp','datetime','t','updatedAt']);
+  const id  = firstKey(rec, ['id','balloon_id','name']) ?? 'balloon';
+
+  if(lat!=null && lon!=null) return norm({id, lat, lon, t});
+  return null;
+
+  function norm(p){
+    return { id: String(p.id), lat: +p.lat, lon: +p.lon,
+             t: p.t ? new Date(p.t) : null };
+  }
+}
+
+/* Flatten any crazy nesting into a list of candidate records */
+function collectCandidates(data){
+  const out = [];
+  (function walk(x, depth=0){
+    if(depth>3) return;                           // keep it light
+    if(Array.isArray(x)){ x.forEach(v=>walk(v, depth+1)); return; }
+    if(x && typeof x==="object"){
+      // If object looks like a point already, push it
+      if(Object.keys(x).some(k=>/lat|lon|lng|latitude|longitude/i.test(k))){
+        out.push(x);
+      }else{
+        // walk common containers
+        for(const k of ['points','data','items','features']) if(x[k]) walk(x[k], depth+1);
+        Object.values(x).forEach(v=>walk(v, depth+1));
+      }
+    }
+  })(data);
+  return out;
+}
+
+/* ---------- data fetch ---------- */
+async function fetchHour(hh){
   try{
-    const r = await fetch(`${BASE}/${h}.json`, {cache:"no-store"});
-    if(!r.ok) throw new Error(r.status);
-    const data = await r.json();
-    const arr = Array.isArray(data) ? data : (data.points || Object.values(data));
-    return (arr||[]).map(parsePoint).filter(Boolean);
-  }catch(e){ return []; }
+    const r = await fetch(`${BASE}/${hh}.json`, {cache:'no-store'});
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const candidates = collectCandidates(j);
+    return candidates.map(toPoint).filter(Boolean);
+  }catch(e){
+    console.warn('hour',hh,'failed:',e);
+    return [];
+  }
 }
 
-async function loadAll(){
-  const results = await Promise.allSettled(HOURS.map(fetchHour));
-  // flatten + sort by time
-  const pts = results.flatMap(r => r.value || []).filter(Boolean)
-    .filter(p => !Number.isNaN(p.lat) && !Number.isNaN(p.lon));
-  pts.sort((a,b)=>(a.t?.getTime()||0)-(b.t?.getTime()||0));
-  // group by balloon id
+async function loadTracks(){
+  const settled = await Promise.allSettled(HOURS.map(fetchHour));
+  const pts = settled.flatMap(s=>s.status==='fulfilled'?s.value:[]);
+  // group by id
   const byId = new Map();
   for(const p of pts){
-    if(!byId.has(p.id)) byId.set(p.id, []);
-    byId.get(p.id).push(p);
+    const arr = byId.get(p.id) || [];
+    arr.push(p); byId.set(p.id, arr);
+  }
+  // sort each track by time and dedupe consecutive identical coords
+  for(const [id,arr] of byId){
+    arr.sort((a,b)=>(a.t?.getTime()||0)-(b.t?.getTime()||0));
+    byId.set(id, arr.filter((p,i)=>i===0 || p.lat!==arr[i-1].lat || p.lon!==arr[i-1].lon));
   }
   return byId;
 }
 
-// simple wind overlay via Open-Meteo near latest point
-async function windFor(lat, lon){
-  try{
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=wind_speed_10m,wind_direction_10m&past_days=1`;
-    const r = await fetch(url); if(!r.ok) throw 0;
-    const j = await r.json();
-    const i = (j.hourly.time||[]).length-1; // latest
-    return { spd: j.hourly.wind_speed_10m?.[i], dir: j.hourly.wind_direction_10m?.[i] };
-  }catch{ return null; }
-}
-
+/* ---------- map ---------- */
 const map = L.map('map').setView([20,0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 7, attribution:'© OSM'}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:7,attribution:'© OSM'}).addTo(map);
+
+let layerGroup = L.layerGroup().addTo(map);
 
 async function render(){
-  const groups = await loadAll();
-  groups.forEach(async (track, id)=>{
-    if(!track.length) return;
-    const latlngs = track.map(p=>[p.lat,p.lon]);
-    L.polyline(latlngs, {weight:2, opacity:0.7}).addTo(map);
-    const last = track[track.length-1];
-    const m = L.marker([last.lat,last.lon]).addTo(map);
-    const wind = await windFor(last.lat,last.lon);
-    const info = [
-      `<b>${id}</b>`,
-      last.t ? new Date(last.t).toUTCString() : "no time",
-      wind ? `Wind: ${wind.spd} m/s @ ${wind.dir}°` : "Wind: n/a"
-    ].join('<br/>');
-    m.bindPopup(info);
-  });
+  HUD.textContent = 'Loading last 24h…';
+  const tracks = await loadTracks();
+  layerGroup.clearLayers();
+  let balloonCount = 0, pointCount = 0;
+
+  for(const [id,arr] of tracks){
+    if(!arr.length) continue;
+    balloonCount++;
+    pointCount += arr.length;
+    const latlngs = arr.map(p=>[p.lat,p.lon]);
+    L.polyline(latlngs, {weight:2, opacity:0.8}).addTo(layerGroup);
+    const last = arr[arr.length-1];
+    L.marker([last.lat,last.lon]).addTo(layerGroup)
+      .bindPopup(`<b>${id}</b><br>${last.t?last.t.toUTCString():'no time'}`);
+  }
+  HUD.innerHTML = pointCount
+    ? `Balloons: <b>${balloonCount}</b> • Points: <b>${pointCount}</b> • Updated: ${new Date().toUTCString()}`
+    : `<span class="err">No points parsed. Open DevTools → Console for fetch/parse logs.</span>`;
 }
+
 render();
-setInterval(render, 5*60*1000); // refresh every 5 min
+setInterval(render, 5*60*1000); // refresh every 5 minutes
 </script>
 </body>
 </html>
