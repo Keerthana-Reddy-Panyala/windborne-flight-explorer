@@ -123,6 +123,8 @@ async function loadTracks(){
 
 /* ---------- map ---------- */
 const map = L.map('map').setView([20,0], 2);
+window.MAP = map;      // export for console/helpers
+window.map = map;      // optional alias
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:7,attribution:'© OSM'}).addTo(map);
 
 let layerGroup = L.layerGroup().addTo(map);
@@ -153,6 +155,7 @@ setInterval(render, 5*60*1000); // refresh every 5 minutes
 </script>
 </body>
 </html>
+
 
 
 
