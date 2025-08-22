@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Keerthana Reddy Panyala — Resume</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{--fg:#222;--muted:#666;--acc:#0b6bff}
+    body{font:14px/1.4 system-ui,Segoe UI,Roboto,Arial;margin:28px;color:var(--fg)}
+    h1{font-size:24px;margin:0 0 4px}
+    h2{font-size:15px;margin:22px 0 6px;letter-spacing:.02em;text-transform:uppercase}
+    a{color:var(--acc);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .top{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}
+    .muted{color:var(--muted)}
+    ul{margin:6px 0 0 18px}
+    .pill{display:inline-block;background:#eef5ff;border:1px solid #d7e6ff;
+          padding:3px 8px;border-radius:999px;margin:2px 6px 2px 0;font-size:12px}
+    @media print{a{color:inherit}}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h1>Keerthana Reddy Panyala</h1>
+    <span class="muted">Dallas, TX • F-1 OPT (Immediate Start)</span>
+  </div>
+  <div class="muted">
+    <a href="mailto:keerthanareddypanyala@gmail.com">keerthanareddypanyala@gmail.com</a> •
+    <a href="https://github.com/Keerthana-Reddy-Panyala">github.com/Keerthana-Reddy-Panyala</a> •
+    <a href="https://keerthana-reddy-panyala.github.io/windborne-flight-explorer/">Live Project</a>
+  </div>
+
+  <h2>Summary</h2>
+  <p>
+    Graduate computer scientist focused on building reliable, user-friendly web apps and data visualizations.
+    Recently built a live WindBorne flight viewer that normalizes noisy geo data, renders efficiently with
+    Leaflet (Canvas), and uses a Cloudflare Worker for CORS-safe ingestion.
+  </p>
+
+  <h2>Skills</h2>
+  <p>
+    <span class="pill">JavaScript/TypeScript</span>
+    <span class="pill">Node.js</span>
+    <span class="pill">HTML/CSS</span>
+    <span class="pill">REST/JSON</span>
+    <span class="pill">Leaflet</span>
+    <span class="pill">Cloudflare Workers</span>
+    <span class="pill">Git/GitHub</span>
+    <span class="pill">SQL/NoSQL</span>
+    <span class="pill">Python</span>
+  </p>
+
+  <h2>Selected Project</h2>
+  <p><b>WindBorne Flight Explorer</b> —
+     <a href="https://keerthana-reddy-panyala.github.io/windborne-flight-explorer/">Live</a> •
+     <a href="https://github.com/Keerthana-Reddy-Panyala/windborne-flight-explorer">Source</a></p>
+  <ul>
+    <li>Proxy: Cloudflare Worker fetches <code>treasure/HH.json</code> safely (CORS) and serves to the client.</li>
+    <li>Parsing: normalizes various lat/lon formats (incl. micro-degrees), dedupes points, merges last 24h.</li>
+    <li>Rendering: Leaflet Canvas with tiny, performant markers and hour-bucket coloring; auto refresh.</li>
+  </ul>
+
+  <h2>Education</h2>
+  <p><b>M.S., Computer Science</b> — University of North Texas (Denton)</p>
+
+  <h2>Work Authorization</h2>
+  <p>F-1 OPT • Immediate start • Dallas-based; open to relocation/remote.</p>
+</body>
+</html>
