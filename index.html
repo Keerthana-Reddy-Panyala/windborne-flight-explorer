@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WindBorne Flight Explorer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>html,body,#map{height:100%;margin:0} .legend{background:#fff;padding:8px;border-radius:6px}</style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const HOURS = [...Array(24).keys()].map(h=>String(h).padStart(2,'0'));
+const BASE = "https://a.windbornesystems.com/treasure";
+
+function parsePoint(p){
+  const lat = p.lat ?? p.latitude ?? p.latDeg;
+  const lon = p.lon ?? p.lng ?? p.longitude ?? p.lonDeg;
+  const ts  = p.ts ?? p.time ?? p.timestamp ?? p.t;
+  const id  = p.id ?? p.balloon_id ?? p.name ?? "unknown";
+  if(lat==null || lon==null) return null;
+  const t = ts ? new Date(ts) : null;
+  return { id, lat:+lat, lon:+lon, t };
+}
+
+async function fetchHour(h){
+  try{
+    const r = await fetch(`${BASE}/${h}.json`, {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    const arr = Array.isArray(data) ? data : (data.points || Object.values(data));
+    return (arr||[]).map(parsePoint).filter(Boolean);
+  }catch(e){ return []; }
+}
+
+async function loadAll(){
+  const results = await Promise.allSettled(HOURS.map(fetchHour));
+  // flatten + sort by time
+  const pts = results.flatMap(r => r.value || []).filter(Boolean)
+    .filter(p => !Number.isNaN(p.lat) && !Number.isNaN(p.lon));
+  pts.sort((a,b)=>(a.t?.getTime()||0)-(b.t?.getTime()||0));
+  // group by balloon id
+  const byId = new Map();
+  for(const p of pts){
+    if(!byId.has(p.id)) byId.set(p.id, []);
+    byId.get(p.id).push(p);
+  }
+  return byId;
+}
+
+// simple wind overlay via Open-Meteo near latest point
+async function windFor(lat, lon){
+  try{
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=wind_speed_10m,wind_direction_10m&past_days=1`;
+    const r = await fetch(url); if(!r.ok) throw 0;
+    const j = await r.json();
+    const i = (j.hourly.time||[]).length-1; // latest
+    return { spd: j.hourly.wind_speed_10m?.[i], dir: j.hourly.wind_direction_10m?.[i] };
+  }catch{ return null; }
+}
+
+const map = L.map('map').setView([20,0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 7, attribution:'© OSM'}).addTo(map);
+
+async function render(){
+  const groups = await loadAll();
+  groups.forEach(async (track, id)=>{
+    if(!track.length) return;
+    const latlngs = track.map(p=>[p.lat,p.lon]);
+    L.polyline(latlngs, {weight:2, opacity:0.7}).addTo(map);
+    const last = track[track.length-1];
+    const m = L.marker([last.lat,last.lon]).addTo(map);
+    const wind = await windFor(last.lat,last.lon);
+    const info = [
+      `<b>${id}</b>`,
+      last.t ? new Date(last.t).toUTCString() : "no time",
+      wind ? `Wind: ${wind.spd} m/s @ ${wind.dir}°` : "Wind: n/a"
+    ].join('<br/>');
+    m.bindPopup(info);
+  });
+}
+render();
+setInterval(render, 5*60*1000); // refresh every 5 min
+</script>
+</body>
+</html>
