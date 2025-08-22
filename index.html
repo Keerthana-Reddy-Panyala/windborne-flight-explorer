@@ -20,7 +20,16 @@
 <script>
 const HUD = document.getElementById('hud');
 const BASE = "https://windborne-cors-proxy.keerthanareddypanyala.workers.dev/treasure";
-const HOURS = Array.from({length:24}, (_,i)=>String(i).padStart(2,"0"));
+console.log("Using BASE:", BASE);
+
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+
+async function getHour(hh) {
+    const url = `${BASE}/${hh}.json`;
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
+    return resp.json();
+}
 
 /* ---------- helpers ---------- */
 function num(n){ const v = Number(n); return Number.isFinite(v) ? v : null; }
@@ -144,5 +153,6 @@ setInterval(render, 5*60*1000); // refresh every 5 minutes
 </script>
 </body>
 </html>
+
 
 
