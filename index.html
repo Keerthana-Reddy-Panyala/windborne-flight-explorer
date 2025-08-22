@@ -1,161 +1,119 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>WindBorne Flight Explorer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
-    html,body,#map{height:100%;margin:0}
-    .hud{position:fixed;left:8px;top:8px;background:#fff;padding:8px 10px;border-radius:8px;
-         font:12px/1.3 system-ui,Segoe UI,Roboto,Arial;border:1px solid #ddd}
-    .err{color:#b00}
+    html, body, #map { height: 100%; margin: 0; }
+    .hud{
+      position:fixed;left:8px;top:8px;background:#fff;padding:8px 10px;border-radius:8px;
+      font:12px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      border:1px solid #ddd; box-shadow:0 1px 4px rgba(0,0,0,.06);
+    }
+    .err{ color:#b00 }
   </style>
 </head>
 <body>
-<div id="map"></div>
-<div class="hud" id="hud">Loading…</div>
+  <div id="map"></div>
+  <div class="hud" id="hud">Loading…</div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-const HUD = document.getElementById('hud');
-const BASE = "https://windborne-cors-proxy.keerthanareddypanyala.workers.dev/treasure";
-console.log("Using BASE:", BASE);
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    /** ---------- config ---------- **/
+    const HUD  = document.getElementById('hud');
+    // Cloudflare Worker (CORS proxy) that mirrors a.windbornesystems.com/treasure/<hh>.json
+    const BASE = 'https://windborne-cors-proxy.keerthanareddypanyala.workers.dev/treasure';
+    console.log('Using BASE:', BASE);
 
-const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+    // color by hour when drawing multiple hours
+    const HOUR_COLOR = {
+      '00':'#1f77b4','01':'#9467bd','02':'#2ca02c',
+      '13':'#ff7f0e','14':'#d62728','15':'#17becf',
+      '16':'#bcbd22','17':'#8c564b','18':'#e377c2'
+    };
 
-async function getHour(hh) {
-    const url = `${BASE}/${hh}.json`;
-    const resp = await fetch(url, { cache: "no-store" });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
-    return resp.json();
-}
+    /** ---------- map ---------- **/
+    const MAP = L.map('map', { preferCanvas: true }).setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 7, attribution: '© OSM'
+    }).addTo(MAP);
 
-/* ---------- helpers ---------- */
-function num(n){ const v = Number(n); return Number.isFinite(v) ? v : null; }
-function fixDeg(v){                 // handle micro-degrees, strings, etc.
-  let n = num(v); if(n==null) return null;
-  if(Math.abs(n)>180 && Math.abs(n)<=1e7) n = n/1e6;
-  return Math.abs(n)<=180 ? n : null;
-}
-function firstKey(obj, keys){
-  for(const k of keys){ if(obj?.[k]!=null) return obj[k]; }
-  return null;
-}
+    // Use a canvas renderer for performance + a group to manage points
+    const RENDERER = L.canvas({ padding: 0.5 });
+    const GROUP = L.layerGroup().addTo(MAP);
+    function clearLayer(){ GROUP.clearLayers(); }
 
-/* Try hard to turn any record into {id,lat,lon,t} */
-function toPoint(rec){
-  if(!rec || typeof rec!=="object") return null;
+    /** draw a single hour file as points */
+    async function drawHour(hh) {
+      const hr  = String(hh).padStart(2, '0');
+      const url = `${BASE}/${hr}.json`;
+      const resp = await fetch(url, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
+      const rows = await resp.json();        // expected: [[lat, lon, ...], ...]
 
-  // GeoJSON support
-  if(rec.type==="Feature" && rec.geometry?.type==="Point"){
-    const [lon,lat] = rec.geometry.coordinates||[];
-    const t = firstKey(rec.properties||rec, ['ts','time','timestamp','datetime','t','updatedAt']);
-    const id = firstKey(rec.properties||rec, ['id','balloon_id','name']);
-    return (lat!=null && lon!=null) ? norm({id, lat, lon, t}) : null;
-  }
+      let n = 0;
+      const fitPts = [];
 
-  // Common flat shapes
-  const lat = fixDeg(firstKey(rec, ['lat','latitude','latDeg','Lat','LAT','y']));
-  const lon = fixDeg(firstKey(rec, ['lon','lng','longitude','lonDeg','Lon','LON','x']));
-  const t   = firstKey(rec, ['ts','time','timestamp','datetime','t','updatedAt']);
-  const id  = firstKey(rec, ['id','balloon_id','name']) ?? 'balloon';
+      for (const pt of rows) {
+        // dataset shape: [lat, lon, ...]
+        if (Array.isArray(pt) && pt.length >= 2) {
+          const lat = +pt[0], lon = +pt[1];
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            fitPts.push([lat, lon]);
+            L.circleMarker([lat, lon], {
+              renderer: RENDERER,
+              radius: 2.3,
+              color: HOUR_COLOR[hr] || '#39f',
+              weight: 0,
+              fillOpacity: 0.85
+            }).addTo(GROUP);
+            n++;
+          }
+        }
+      }
 
-  if(lat!=null && lon!=null) return norm({id, lat, lon, t});
-  return null;
+      if (fitPts.length) MAP.fitBounds(fitPts, { padding: [10, 10] });
+      console.log(`Drew ${n} points from ${hr}.json`);
+      return n;
+    }
 
-  function norm(p){
-    return { id: String(p.id), lat: +p.lat, lon: +p.lon,
-             t: p.t ? new Date(p.t) : null };
-  }
-}
+    /** draw several hours (clears layer first) */
+    async function drawMany(hours){
+      clearLayer();
+      let total = 0;
+      for (const h of hours) total += await drawHour(h);
+      HUD.textContent = `Hours: ${hours.join(', ')} • Total points: ${total.toLocaleString()}`;
+      return total;
+    }
 
-/* Flatten any crazy nesting into a list of candidate records */
-function collectCandidates(data){
-  const out = [];
-  (function walk(x, depth=0){
-    if(depth>3) return;                           // keep it light
-    if(Array.isArray(x)){ x.forEach(v=>walk(v, depth+1)); return; }
-    if(x && typeof x==="object"){
-      // If object looks like a point already, push it
-      if(Object.keys(x).some(k=>/lat|lon|lng|latitude|longitude/i.test(k))){
-        out.push(x);
-      }else{
-        // walk common containers
-        for(const k of ['points','data','items','features']) if(x[k]) walk(x[k], depth+1);
-        Object.values(x).forEach(v=>walk(v, depth+1));
+    /** helper: list of last N UTC hours, oldest → newest */
+    function hoursBack(n = 6) {
+      const now = new Date(); // current UTC time
+      return [...Array(n)]
+        .map((_, i) => String((now.getUTCHours() - i + 24) % 24).padStart(2, '0'))
+        .reverse();
+    }
+
+    /** initial render + refresh every 5 minutes */
+    async function drawLastN(n = 6){
+      HUD.textContent = 'Loading…';
+      try {
+        await drawMany(hoursBack(n));
+      } catch (e) {
+        console.error(e);
+        HUD.innerHTML = `<span class="err">Load failed: ${e.message}</span>`;
       }
     }
-  })(data);
-  return out;
-}
 
-/* ---------- data fetch ---------- */
-async function fetchHour(hh){
-  try{
-    const r = await fetch(`${BASE}/${hh}.json`, {cache:'no-store'});
-    if(!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = await r.json();
-    const candidates = collectCandidates(j);
-    return candidates.map(toPoint).filter(Boolean);
-  }catch(e){
-    console.warn('hour',hh,'failed:',e);
-    return [];
-  }
-}
+    drawLastN(6);
+    setInterval(() => drawLastN(6), 5 * 60 * 1000);
 
-async function loadTracks(){
-  const settled = await Promise.allSettled(HOURS.map(fetchHour));
-  const pts = settled.flatMap(s=>s.status==='fulfilled'?s.value:[]);
-  // group by id
-  const byId = new Map();
-  for(const p of pts){
-    const arr = byId.get(p.id) || [];
-    arr.push(p); byId.set(p.id, arr);
-  }
-  // sort each track by time and dedupe consecutive identical coords
-  for(const [id,arr] of byId){
-    arr.sort((a,b)=>(a.t?.getTime()||0)-(b.t?.getTime()||0));
-    byId.set(id, arr.filter((p,i)=>i===0 || p.lat!==arr[i-1].lat || p.lon!==arr[i-1].lon));
-  }
-  return byId;
-}
-
-/* ---------- map ---------- */
-const map = L.map('map').setView([20,0], 2);
-window.MAP = map;      // export for console/helpers
-window.map = map;      // optional alias
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:7,attribution:'© OSM'}).addTo(map);
-
-let layerGroup = L.layerGroup().addTo(map);
-
-async function render(){
-  HUD.textContent = 'Loading last 24h…';
-  const tracks = await loadTracks();
-  layerGroup.clearLayers();
-  let balloonCount = 0, pointCount = 0;
-
-  for(const [id,arr] of tracks){
-    if(!arr.length) continue;
-    balloonCount++;
-    pointCount += arr.length;
-    const latlngs = arr.map(p=>[p.lat,p.lon]);
-    L.polyline(latlngs, {weight:2, opacity:0.8}).addTo(layerGroup);
-    const last = arr[arr.length-1];
-    L.marker([last.lat,last.lon]).addTo(layerGroup)
-      .bindPopup(`<b>${id}</b><br>${last.t?last.t.toUTCString():'no time'}`);
-  }
-  HUD.innerHTML = pointCount
-    ? `Balloons: <b>${balloonCount}</b> • Points: <b>${pointCount}</b> • Updated: ${new Date().toUTCString()}`
-    : `<span class="err">No points parsed. Open DevTools → Console for fetch/parse logs.</span>`;
-}
-
-render();
-setInterval(render, 5*60*1000); // refresh every 5 minutes
-</script>
+    // Expose helpers for quick testing in DevTools
+    window.WB = { drawHour, drawMany, clearLayer, hoursBack, MAP };
+  </script>
 </body>
 </html>
-
-
-
-
